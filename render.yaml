@@ -2,7 +2,6 @@ services:
   - type: web
     name: file-integrity-monitoring-system
     runtime: python
-    plan: free
     buildCommand: pip install -r requirements.txt
     startCommand: gunicorn app:app
     envVars:
@@ -18,3 +17,5 @@ services:
         sync: false
       - key: HA_API_KEY
         sync: false
+      - key: FIM_AGENT_TOKEN
+        generateValue: true

@@ -2,6 +2,9 @@ import os
 import hashlib
 import sqlite3
 import requests
+import secrets
+import hmac
+import json
 from datetime import datetime
 from flask import Flask, render_template_string, request, redirect, url_for, session, flash
 
@@ -11,6 +14,7 @@ DB_NAME = os.environ.get("FIM_DB_PATH", "fim.db")
 
 VT_API_KEY = os.environ.get("VT_API_KEY", "")
 HA_API_KEY = os.environ.get("HA_API_KEY", "")
+FIM_AGENT_TOKEN = os.environ.get("FIM_AGENT_TOKEN", "")
 
 def check_virustotal(file_hash):
     """
@@ -553,6 +557,90 @@ def run_scan():
     conn.close()
     flash(f"Multi-API Scan complete. Processed checks across VT, Hybrid Analysis, & NIST NVD.")
     return redirect(url_for('dashboard'))
+
+@app.route('/api/agent/sync', methods=['POST'])
+def agent_sync():
+    """Receive file metadata and integrity events from an authenticated local agent.
+
+    The agent sends hashes and paths only; file contents are never uploaded.
+    """
+    if not FIM_AGENT_TOKEN:
+        return {"error": "Agent integration is not configured on the server."}, 503
+
+    supplied = request.headers.get("Authorization", "")
+    expected = f"Bearer {FIM_AGENT_TOKEN}"
+    if not hmac.compare_digest(supplied, expected):
+        return {"error": "Unauthorized"}, 401
+
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return {"error": "Expected a JSON object."}, 400
+
+    folders = payload.get("folders", [])
+    events = payload.get("events", [])
+    if not isinstance(folders, list) or not isinstance(events, list):
+        return {"error": "folders and events must be arrays."}, 400
+    if len(folders) > 50 or len(events) > 2000:
+        return {"error": "Batch limit exceeded."}, 413
+
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    folder_count = 0
+    baseline_count = 0
+    event_count = 0
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    try:
+        for folder in folders:
+            if not isinstance(folder, dict):
+                continue
+            folder_path = str(folder.get("path", ""))[:2048]
+            if not folder_path:
+                continue
+            cursor.execute("INSERT OR IGNORE INTO monitored_folders (folder_path) VALUES (?)", (folder_path,))
+            if cursor.rowcount:
+                folder_count += 1
+            baseline_files = folder.get("baseline_files", [])
+            if not isinstance(baseline_files, list) or len(baseline_files) > 10000:
+                continue
+            for item in baseline_files:
+                if not isinstance(item, dict):
+                    continue
+                file_path = str(item.get("path", ""))[:4096]
+                digest = str(item.get("sha256", ""))
+                if not file_path or len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest.lower()):
+                    continue
+                cursor.execute(
+                    "INSERT OR IGNORE INTO baselines (file_path, hash_value, last_scanned) VALUES (?, ?, ?)",
+                    (file_path, digest.lower(), now)
+                )
+                baseline_count += cursor.rowcount
+
+        allowed_events = {"FILE_CREATED", "FILE_MODIFIED", "FILE_DELETED"}
+        for event in events:
+            if not isinstance(event, dict):
+                continue
+            event_type = str(event.get("event_type", ""))
+            file_path = str(event.get("file_path", ""))[:4096]
+            if event_type not in allowed_events or not file_path:
+                continue
+            details = str(event.get("details", "Local agent detected a file-system change."))[:2000]
+            cursor.execute(
+                "INSERT INTO logs (timestamp, event_type, file_path, details, status) VALUES (?, ?, ?, ?, ?)",
+                (now, event_type, file_path, details, "ALERT")
+            )
+            event_count += 1
+
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+    return {"ok": True, "folders_registered": folder_count,
+            "baseline_entries_added": baseline_count, "events_recorded": event_count}, 200
+
 
 @app.route('/settings')
 def settings():

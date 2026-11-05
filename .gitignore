@@ -8,3 +8,6 @@ __pycache__/
 *.sqlite3
 instance/
 .DS_Store
+agent_config.json
+fims_agent_state.json
+*.log

@@ -1,0 +1,8 @@
+{
+  "dashboard_url": "https://YOUR-RENDER-SERVICE.onrender.com",
+  "agent_token": "PASTE_FIM_AGENT_TOKEN_FROM_RENDER_HERE",
+  "folders": [
+    "C:/Users/Public/Documents/FIMS-Test"
+  ],
+  "scan_interval_seconds": 10
+}
