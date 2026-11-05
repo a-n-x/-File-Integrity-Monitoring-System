@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: file-integrity-monitoring-system
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app
+    envVars:
+      - key: FLASK_SECRET_KEY
+        generateValue: true
+      - key: FIM_USERNAME
+        sync: false
+      - key: FIM_PASSWORD
+        sync: false
+      - key: FIM_DB_PATH
+        value: fim.db
+      - key: VT_API_KEY
+        sync: false
+      - key: HA_API_KEY
+        sync: false
